@@ -114,21 +114,49 @@ html, body, [class*="css"] {{
 }}
 .kpi-accent {{ color: {GOLD}; }}
 
-/* Section headers */
+/* Section headers — "ticket stub" style */
 .section-eyebrow {{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(232,185,77,0.10);
+    border: 1px solid rgba(232,185,77,0.4);
     color: {GOLD};
-    font-size: 0.78rem;
+    padding: 4px 14px 4px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    font-weight: 600;
-    margin-bottom: 2px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}}
+.section-eyebrow::before {{
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: {GOLD};
+    box-shadow: 0 0 6px {GOLD};
+    flex-shrink: 0;
+}}
+.section-title-wrap {{
+    margin-bottom: 22px;
 }}
 .section-title {{
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 2.1rem;
+    font-size: 2.7rem;
     letter-spacing: 0.03em;
     color: {TEXT};
     margin-top: 0;
+    line-height: 1.05;
+    text-shadow: 0 0 20px rgba(232,185,77,0.12);
+}}
+.section-underline {{
+    width: 64px;
+    height: 4px;
+    margin-top: 10px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, {GOLD}, {CRIMSON});
 }}
 
 /* Generic panel */
@@ -201,11 +229,13 @@ def reel_divider():
 
 def section_header(eyebrow: str, title: str):
     st.markdown(
+        f'<div class="section-title-wrap">'
         f'<div class="section-eyebrow">{eyebrow}</div>'
-        f'<div class="section-title">{title}</div>',
+        f'<div class="section-title">{title}</div>'
+        f'<div class="section-underline"></div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
-    st.write("")
 
 
 # ----------------------------------------------------------
