@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from scipy import stats
 from streamlit_option_menu import option_menu
 
 # ----------------------------------------------------------
@@ -210,12 +211,25 @@ def section_header(eyebrow: str, title: str):
 # ----------------------------------------------------------
 # Data & model loading
 # ----------------------------------------------------------
-DATA_PATH = os.path.join("Clean Dataset", "movies_clean.csv")
-if not os.path.exists(DATA_PATH):
-    DATA_PATH = "movies_clean.csv"  # fallback if deployed flat
+DATA_PATH_CANDIDATES = [
+    os.path.join("Clean Dataset", "movies_clean.csv"),
+    "movies_clean.csv",
+]
+DATA_PATH = next((p for p in DATA_PATH_CANDIDATES if os.path.exists(p)), DATA_PATH_CANDIDATES[-1])
 
-MODEL_PATH = os.path.join("Models", "movie_success_model.pkl")
-ENCODER_PATH = os.path.join("Models", "genre_encoder.pkl")
+MODEL_PATH_CANDIDATES = [
+    os.path.join("Models", "movie_success_model.pkl"),
+    os.path.join("models", "movie_success_model.pkl"),
+    "movie_success_model.pkl",
+]
+MODEL_PATH = next((p for p in MODEL_PATH_CANDIDATES if os.path.exists(p)), MODEL_PATH_CANDIDATES[0])
+
+ENCODER_PATH_CANDIDATES = [
+    os.path.join("Models", "genre_encoder.pkl"),
+    os.path.join("models", "genre_encoder.pkl"),
+    "genre_encoder.pkl",
+]
+ENCODER_PATH = next((p for p in ENCODER_PATH_CANDIDATES if os.path.exists(p)), ENCODER_PATH_CANDIDATES[0])
 
 
 @st.cache_data
@@ -257,6 +271,36 @@ def encode_genre(genre_value: str) -> int:
     return int(genre_encoder.transform([genre_value])[0])
 
 
+@st.cache_data
+def compute_stat_tests(data: pd.DataFrame):
+    """Stage 3 of the brief: T-tests on numeric features + Chi-square on genre."""
+    succ = data[data["success"] == 1]
+    fail = data[data["success"] == 0]
+
+    ttests = []
+    for col, label in [
+        ("popularity", "Popularity"),
+        ("vote_average", "Vote average"),
+        ("runtime", "Runtime"),
+        ("budget", "Budget"),
+    ]:
+        t_stat, p_val = stats.ttest_ind(succ[col], fail[col], equal_var=False)
+        ttests.append({
+            "Feature": label,
+            "Hit mean": succ[col].mean(),
+            "Flop mean": fail[col].mean(),
+            "t-statistic": t_stat,
+            "p-value": p_val,
+            "Significant (α=0.05)": "Yes" if p_val < 0.05 else "No",
+        })
+    ttest_df = pd.DataFrame(ttests)
+
+    contingency = pd.crosstab(data["primary_genre"], data["success"])
+    chi2, chi2_p, dof, _ = stats.chi2_contingency(contingency)
+
+    return ttest_df, {"chi2": chi2, "p_value": chi2_p, "dof": dof}
+
+
 # ----------------------------------------------------------
 # Sidebar navigation
 # ----------------------------------------------------------
@@ -270,8 +314,8 @@ with st.sidebar:
     )
     selected = option_menu(
         menu_title=None,
-        options=["Home", "Dashboard", "Prediction", "Dataset", "About"],
-        icons=["house", "bar-chart-line", "cpu", "table", "info-circle"],
+        options=["Overview", "Home", "Dashboard", "Prediction", "Dataset", "About"],
+        icons=["clipboard-data", "house", "bar-chart-line", "cpu", "table", "info-circle"],
         default_index=0,
         styles={
             "container": {"padding": "0", "background-color": BG_ALT},
@@ -293,6 +337,137 @@ with st.sidebar:
         st.caption("Model · Random Forest · loaded")
     else:
         st.caption("Model · not found — run train_model.py")
+
+
+# ==========================================================
+# OVERVIEW
+# ==========================================================
+def show_overview():
+    st.markdown('<div class="marquee-title" style="font-size:2.8rem;">OVERVIEW</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="marquee-sub">The business case, the method, and what the data actually says.</div>',
+        unsafe_allow_html=True,
+    )
+    reel_divider()
+
+    if df is None:
+        st.error(f"Couldn't load the dataset: {data_error}")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        section_header("Stage 0", "Problem Statement")
+        st.markdown(
+            """
+**Definition of success.** A movie is labeled a **success** when its
+`revenue` exceeds its `budget` — a simple break-even rule, not a measure of
+critical or cultural impact.
+
+**Why it matters.** Greenlighting a film means committing tens of millions
+of dollars before a single ticket sells.
+- **Studios** use signals like this to decide which scripts get funded and
+  how much to spend on marketing.
+- **Investors and distributors** use it to size risk across a slate of
+  films rather than betting on any single title.
+
+**Objective.** Explore what's associated with box-office success, test
+those associations statistically, train a classifier on the result, and
+ship it as something a non-technical stakeholder can actually use.
+
+**Why it's a classification problem.** The target, `success`, only takes
+two values — 1 (hit) or 0 (flop). The model isn't predicting a revenue
+number; it's predicting which of two bins a title falls into.
+"""
+        )
+
+    with col2:
+        section_header("Stages 1–5", "Approach")
+        st.markdown(
+            """
+1. **Clean** the raw data — parse genres, flag zero/negative budget or
+   revenue, remove duplicates.
+2. **Engineer** the target and supporting metrics: `success`, `profit`,
+   `roi`.
+3. **Explore** relationships between budget, revenue, popularity, runtime,
+   rating, and genre.
+4. **Test statistically** whether those relationships are real or just
+   noise (T-tests + a Chi-square test — see below).
+5. **Model** success with a Random Forest, evaluate it honestly, and
+   **ship** it in this Streamlit app for live scoring.
+"""
+        )
+
+    reel_divider()
+    section_header("Stage 3", "Statistical Testing — what's actually significant")
+    ttest_df, chi2_result = compute_stat_tests(df)
+
+    display_df = ttest_df.copy()
+    display_df["Hit mean"] = display_df["Hit mean"].map(lambda v: f"{v:,.2f}")
+    display_df["Flop mean"] = display_df["Flop mean"].map(lambda v: f"{v:,.2f}")
+    display_df["t-statistic"] = display_df["t-statistic"].map(lambda v: f"{v:.3f}")
+    display_df["p-value"] = display_df["p-value"].map(lambda v: f"{v:.4f}")
+    st.dataframe(display_df, width="stretch", hide_index=True)
+
+    st.caption(
+        f"Chi-square test — genre vs. success: χ² = {chi2_result['chi2']:.3f}, "
+        f"dof = {chi2_result['dof']}, p = {chi2_result['p_value']:.4f}. "
+        f"Null hypothesis: genre and success are independent. "
+        f"{'Rejected' if chi2_result['p_value'] < 0.05 else 'Not rejected'} at α = 0.05."
+    )
+    st.markdown(
+        "A p-value is the probability of seeing a difference this large (or larger) "
+        "if there were truly no relationship. Below 0.05, we call it significant."
+    )
+
+    reel_divider()
+    section_header("Findings", "Business recommendations")
+
+    sig_features = display_df[ttest_df["p-value"] < 0.05]["Feature"].tolist()
+    genre_sig = chi2_result["p_value"] < 0.05
+
+    findings = []
+    if sig_features:
+        findings.append(
+            f"**{', '.join(sig_features)}** show a statistically significant difference "
+            f"between hits and flops — worth weighing in greenlight decisions, though the "
+            f"effect sizes are small."
+        )
+    else:
+        findings.append(
+            "None of budget, popularity, runtime, or rating show a statistically "
+            "significant difference between hits and flops on their own."
+        )
+
+    if genre_sig:
+        findings.append("Genre is significantly associated with success — some genres are safer bets than others.")
+    else:
+        findings.append(
+            "**Genre shows no significant association with success** (p ≈ "
+            f"{chi2_result['p_value']:.2f}). Despite the intuitive pull of 'safe genres,' "
+            "this data doesn't back that up — hit rates across genres sit within a few "
+            "points of each other."
+        )
+
+    findings.append(
+        "**Budget and revenue are strongly correlated (r ≈ 0.76)** — bigger productions "
+        "scale everything up together, which is exactly why budget alone is a weak "
+        "predictor of the *ratio* between the two."
+    )
+    findings.append(
+        "**Recommendation:** treat budget, genre, and runtime as weak individual signals "
+        "at best. A real greenlight model would need variables this dataset doesn't have — "
+        "marketing spend, release-date competition, franchise/sequel status, and cast "
+        "recognition are the more likely levers."
+    )
+
+    for f in findings:
+        st.markdown(f"- {f}")
+
+    st.info(
+        "Open **Dashboard** to explore these relationships visually, or **Prediction** "
+        "to score a hypothetical title with the trained model.",
+        icon="📋",
+    )
 
 
 # ==========================================================
@@ -462,6 +637,22 @@ def show_dashboard():
     )
     fig.update_layout(template=PLOTLY_TEMPLATE, height=380)
     st.plotly_chart(fig, width='stretch', key="chart_6")
+
+    reel_divider()
+    with st.expander("📋 Statistical tests (T-test + Chi-square) — full results"):
+        st.caption("Computed on the full dataset, not the genre filter above.")
+        ttest_df, chi2_result = compute_stat_tests(df)
+        display_df = ttest_df.copy()
+        display_df["Hit mean"] = display_df["Hit mean"].map(lambda v: f"{v:,.2f}")
+        display_df["Flop mean"] = display_df["Flop mean"].map(lambda v: f"{v:,.2f}")
+        display_df["t-statistic"] = display_df["t-statistic"].map(lambda v: f"{v:.3f}")
+        display_df["p-value"] = display_df["p-value"].map(lambda v: f"{v:.4f}")
+        st.dataframe(display_df, width="stretch", hide_index=True)
+        st.markdown(
+            f"Chi-square (genre vs. success): χ² = {chi2_result['chi2']:.3f}, "
+            f"dof = {chi2_result['dof']}, p = {chi2_result['p_value']:.4f}. "
+            "See **Overview** for what these results mean for the business."
+        )
 
 
 # ==========================================================
@@ -635,7 +826,9 @@ def show_about():
 <div class="panel">
 MovieIQ estimates whether a movie is likely to earn back its budget, using a
 Random Forest trained on budget, popularity, runtime, audience rating, and
-genre. 
+genre. It started as a civil engineering background applied to a very
+different kind of structural question: what holds up a film's box office
+outcome.
 </div>
 """,
         unsafe_allow_html=True,
@@ -689,7 +882,7 @@ genre.
     reel_divider()
     st.markdown(
         f'<div style="color:{MUTED};">Author · <span style="color:{TEXT};">'
-        f'Shubham Samarpit</span> — Data Analytics</div>',
+        f'Shubham Samarpit</span> — Civil Engineering → Data Analytics</div>',
         unsafe_allow_html=True,
     )
 
@@ -698,6 +891,7 @@ genre.
 # Router
 # ==========================================================
 PAGES = {
+    "Overview": show_overview,
     "Home": show_home,
     "Dashboard": show_dashboard,
     "Prediction": show_prediction,
